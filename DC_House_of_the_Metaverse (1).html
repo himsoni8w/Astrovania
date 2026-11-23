@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DC House of the Metaverse</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0a111d;color:#f1f5ff;--muted:#b5c4d9;--line:#32455f}
+*{box-sizing:border-box}
+body{margin:0}
+main{max-width:960px;margin:auto;padding:clamp(16px,4vw,40px)}
+header{text-align:center}
+h1{font:clamp(30px,6vw,54px) Georgia,serif;margin:0 0 10px}
+h2{font-size:clamp(18px,3vw,24px);margin:0 0 6px}
+p{margin:0;color:var(--muted);line-height:1.5}
+.status,.scorecard,.party{background:#142035;border:1px solid var(--line);border-radius:14px;padding:15px}
+.status{margin-top:18px;text-align:center}
+figure{margin:16px 0}
+svg{width:100%;display:block}
+.parties{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.party{border-top:3px solid var(--party)}
+.party b{display:block;font-weight:700}
+.party small{display:block;color:var(--muted);margin:4px 0 8px}
+input,button{font:inherit;color:inherit;border:1px solid #52647a;border-radius:7px;background:#101a2b;padding:8px}
+input{width:100%}
+input:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid #81b9ff;outline-offset:3px}
+input[aria-invalid=true]{border-color:#ff8589}
+button{cursor:pointer}
+.toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin:12px 0}
+.error{color:#ff9fa4}
+ .scorecard{margin-top:14px}
+.score-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.score-grid label{display:block;margin-bottom:6px;font-weight:700}
+.score-grid+ p{margin-top:10px}
+.party strong{font-size:clamp(22px,5vw,30px)}
+.error:empty{display:none}
+@media(max-width:470px){.party{padding:9px}.party small{font-size:11px}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>DC House of the Metaverse</h1><p>435 representative seats · 3 speakers</p></header>
+<section class="status" aria-live="polite" aria-atomic="true">
+<h2 id="headline"></h2><p id="gap"></p>
+</section>
+<figure>
+<svg id="chamber" viewBox="0 0 800 425" role="img" aria-label="Semicircular chamber seating chart">
+<g id="seats" aria-hidden="true"></g>
+<g text-anchor="middle" font-family="system-ui,sans-serif">
+<text x="400" y="300" fill="#f1f5ff" font-size="52" font-weight="750">435</text>
+<text x="400" y="329" fill="#f1d69c" font-size="16" font-weight="700">MAJORITY · 218 SEATS</text>
+<rect x="277" y="345" width="246" height="74" rx="10" fill="#142035" stroke="#52647a"/>
+<text x="400" y="365" fill="#f1d69c" font-size="13" font-weight="700">OPERATOR CONSOLE</text>
+<g id="speakers" fill="#f1d69c" font-size="10"></g>
+</g>
+</svg>
+</figure>
+<div class="parties" id="parties"></div>
+<section class="scorecard" aria-label="Credits and penalties">
+<div class="score-grid">
+<div><label for="credits">Credits ❇️</label><input id="credits" inputmode="numeric" pattern="[0-9]*" aria-describedby="ratioHelp error"></div>
+<div><label for="penalties">Penalties 📛</label><input id="penalties" inputmode="numeric" pattern="[0-9]*" aria-describedby="ratioHelp error"></div>
+</div>
+<p id="ratioHelp">The ❇️ to 📛 ratio splits 391 seats between NCRV and LSRZ. RCR always has 44 seats. Two zeros restore the starting split.</p>
+<div class="toolbar"><p id="allocation"></p><button type="button" id="resetScores">Reset credits and penalties</button></div>
+<p id="error" class="error" role="status"></p>
+</section>
+</main>
+<script>
+'use strict';
+const total = 435;
+const threshold = Math.floor(total / 2) + 1;
+const parties = [
+  { code: 'NCRV', name: 'NCR Volteriya', color: '#5da6ff' },
+  { code: 'RCR', name: 'RCR', color: '#f4f6fa' },
+  { code: 'LSRZ', name: 'LSR Zhephhorecia', color: '#ff686d' }
+];
+const fixedRCR = 44;
+const contested = total - fixedRCR;
+const defaults = ['100', '291'];
+const key = 'dc-house-proportional-scores-v1';
+const find = id => document.getElementById(id);
+const validScore = value => typeof value === 'string' && /^[0-9]*$/.test(value);
+let scores = [...defaults];
+try {
+  const saved = JSON.parse(localStorage.getItem(key));
+  if (Array.isArray(saved) && saved.length === 2 && saved.every(validScore)) scores = saved;
+} catch {}
+function save() {
+  try { localStorage.setItem(key, JSON.stringify(scores)); } catch {}
+}
+function seatCounts() {
+  const [credits, penalties] = scores.map(value => BigInt(value || '0'));
+  const combined = credits + penalties;
+  const ncrv = combined === 0n ? Number(defaults[0]) :
+    Number((2n * BigInt(contested) * credits + combined) / (2n * combined));
+  return [ncrv, fixedRCR, contested - ncrv];
+}
+function svgElement(tag, attributes) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  return node;
+}
+const rows = Array.from({ length: 10 }, (_, row) => {
+  const radius = 180 + row * 22;
+  const length = 30 + row * 3;
+  return Array.from({ length }, (_, index) => {
+    const angle = Math.PI * (index + .5) / length;
+    const seat = svgElement('circle', {
+      cx: 400 - radius * Math.cos(angle), cy: 400 - radius * Math.sin(angle), r: 6.4
+    });
+    find('seats').append(seat);
+    return seat;
+  });
+});
+[318,400,482].forEach((x, index) => {
+  const label = svgElement('text', { x, y: 407 });
+  label.textContent = 'SPEAKER ' + (index + 1);
+  find('speakers').append(svgElement('circle', { cx: x, cy: 386, r: 5 }), label);
+});
+const cards = parties.map(party => {
+  const block = document.createElement('div');
+  block.className = 'party';
+  block.style.setProperty('--party', party.color);
+  const label = document.createElement('b');
+  label.textContent = party.code;
+  const caption = document.createElement('small');
+  const count = document.createElement('strong');
+  block.append(label, caption, count);
+  find('parties').append(block);
+  return { caption, count };
+});
+const scoreInputs = [find('credits'), find('penalties')];
+scoreInputs.forEach((input, index) => {
+  input.value = scores[index];
+  input.addEventListener('input', () => {
+    if (!validScore(input.value)) {
+      input.value = scores[index];
+      find('error').textContent = 'Use whole numbers of zero or more.';
+      return;
+    }
+    find('error').textContent = '';
+    scores[index] = input.value;
+    render();
+    save();
+  });
+});
+
+// Give each faction an exact total while spreading seats over the arcs.
+// Allocate the next seat to the faction furthest below its proportional share.
+function render() {
+  const targets = seatCounts();
+  const distributed = targets.map(() => 0);
+  const colors = parties.map(party => party.color);
+  let processed = 0;
+  for (const row of rows) {
+    const allocation = targets.map(() => 0);
+    for (const seat of row) {
+      processed += 1;
+      let chosen = -1;
+      let deficit = -Infinity;
+      targets.forEach((target, index) => {
+        const distance = processed * target - distributed[index] * total;
+        if (distributed[index] < target && distance > deficit) {
+          chosen = index;
+          deficit = distance;
+        }
+      });
+      allocation[chosen] += 1;
+      distributed[chosen] += 1;
+    }
+    let position = 0;
+    allocation.forEach((number, index) => {
+      for (let seat = 0; seat < number; seat += 1) {
+        row[position++].setAttribute('fill', colors[index]);
+      }
+    });
+  }
+  cards.forEach(({ caption, count }, index) => {
+    const percent = (100 * targets[index] / total).toFixed(1);
+    caption.textContent = parties[index].name + ' · ' + percent + '%';
+    count.textContent = targets[index];
+  });
+  find('allocation').textContent = total + ' of ' + total + ' seats assigned';
+  find('chamber').setAttribute('aria-label', parties.map((party, index) =>
+    party.code + ': ' + targets[index] + ' seats').join(', '));
+  const [ncrv, , lsrz] = targets;
+  const captainLeads = ncrv > lsrz;
+  const leader = captainLeads ? 'The Captain’s NCRV' : 'The Chancellor’s LSRZ';
+  const leaderSeats = Math.max(ncrv, lsrz);
+  const majority = leaderSeats >= threshold;
+  find('headline').textContent = leader + (majority ?
+    ' holds the majority with ' + leaderSeats + ' seats.' :
+    ' leads with ' + leaderSeats + ' seats. No party has a majority.');
+  const gap = Math.abs(ncrv - lsrz);
+  find('gap').textContent = 'The Captain’s NCRV ' + (captainLeads ? 'leads' : 'trails') +
+    ' by ' + gap + (gap === 1 ? ' seat.' : ' seats.');
+}
+find('resetScores').addEventListener('click', () => {
+  scores = [...defaults];
+  scoreInputs.forEach((input, index) => { input.value = scores[index]; });
+  find('error').textContent = '';
+  render();
+  save();
+});
+render();
+</script>
+</body>
+</html>
